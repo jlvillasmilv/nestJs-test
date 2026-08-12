@@ -77,6 +77,7 @@ describe('UsersService', () => {
         username: 'a',
         password: 'x',
         status: true,
+        email_verified_at: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -114,6 +115,7 @@ describe('UsersService', () => {
       expect(stored?.email).toBe('admin@example.com');
       expect(stored?.username).toBe('admin');
       expect(stored?.status).toBe(true);
+      expect(stored?.email_verified_at).toBeInstanceOf(Date);
       expect(await bcrypt.compare('12345678', stored!.password!)).toBe(true);
       expect(result.email).toBe('admin@example.com');
       expect(result).not.toHaveProperty('password');
@@ -128,6 +130,7 @@ describe('UsersService', () => {
         username: 'a',
         password: 'x',
         status: true,
+        email_verified_at: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -154,6 +157,7 @@ describe('UsersService', () => {
         username: 'a',
         password: 'old',
         status: true,
+        email_verified_at: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -165,6 +169,31 @@ describe('UsersService', () => {
 
       expect(result.password).toBe('new-hash');
       expect(mockRepository.save).toHaveBeenCalled();
+    });
+
+    it('actualiza email_verified_at', async () => {
+      const existing = {
+        id: 1,
+        email: 'a@b.com',
+        username: 'a',
+        password: 'old',
+        status: true,
+        email_verified_at: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const verificationDate = new Date('2026-01-02');
+      mockRepository.findOne.mockResolvedValue(existing);
+      mockRepository.save.mockResolvedValue({
+        ...existing,
+        email_verified_at: verificationDate,
+      });
+
+      const result = await service.updateValue('1', {
+        email_verified_at: verificationDate,
+      });
+
+      expect(result.email_verified_at).toEqual(verificationDate);
     });
 
     it('lanza NotFoundException si el usuario no existe', async () => {

@@ -5,18 +5,27 @@ import { PublicUser } from '../users/user.entity';
 import { UserDTO } from '../users/user.dto';
 import { ForgotPasswordDTO } from './forgot-password.dto';
 import { ResetPasswordDTO } from './reset-password.dto';
+import { VerifyEmailDTO } from './verify-email.dto';
 
 describe('AuthController', () => {
   let controller: AuthController;
 
   const mockAuthService = {
-    register: jest.fn<Promise<AuthResponse>, [dto: UserDTO]>(),
+    register: jest.fn<Promise<{ message: string }>, [dto: UserDTO]>(),
     login: jest.fn<AuthResponse, [user: PublicUser]>(),
     logout: jest.fn<{ message: string }, [token: string]>(),
     forgotPassword: jest.fn<Promise<{ message: string }>, [email: string]>(),
     resetPassword: jest.fn<
       Promise<{ message: string }>,
       [token: string, password: string]
+    >(),
+    verifyEmail: jest.fn<
+      Promise<{ message: string; user: PublicUser }>,
+      [token: string]
+    >(),
+    resendVerificationEmail: jest.fn<
+      Promise<{ message: string }>,
+      [email: string]
     >(),
   };
 
@@ -43,13 +52,17 @@ describe('AuthController', () => {
         password: '12345678',
       };
       mockAuthService.register.mockResolvedValue({
-        access_token: 'tok',
-      } as AuthResponse);
+        message:
+          'Usuario registrado exitosamente. Se ha enviado un correo de verificación.',
+      });
 
       const result = await controller.register(dto);
 
       expect(mockAuthService.register).toHaveBeenCalledWith(dto);
-      expect(result).toEqual({ access_token: 'tok' });
+      expect(result).toEqual({
+        message:
+          'Usuario registrado exitosamente. Se ha enviado un correo de verificación.',
+      });
     });
   });
 
@@ -139,6 +152,48 @@ describe('AuthController', () => {
         'Nueva12345',
       );
       expect(result).toEqual({ message: 'Contraseña actualizada' });
+    });
+  });
+
+  describe('verifyEmail', () => {
+    it('delega en AuthService.verifyEmail con el token del DTO', async () => {
+      mockAuthService.verifyEmail.mockResolvedValue({
+        message: 'Email verificado correctamente',
+        user: {
+          id: 1,
+          email: 'a@b.com',
+          username: 'user',
+          status: true,
+          email_verified_at: new Date(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+      const body: VerifyEmailDTO = { token: 'verify-token' };
+
+      const result = await controller.verifyEmail(body);
+
+      expect(mockAuthService.verifyEmail).toHaveBeenCalledWith('verify-token');
+      expect(result.message).toBe('Email verificado correctamente');
+      expect(result.user.email).toBe('a@b.com');
+    });
+  });
+
+  describe('resendVerificationEmail', () => {
+    it('delega en AuthService.resendVerificationEmail con el email del DTO', async () => {
+      mockAuthService.resendVerificationEmail.mockResolvedValue({
+        message: 'Se ha enviado un nuevo enlace de verificación',
+      });
+      const body: ForgotPasswordDTO = { email: 'a@b.com' };
+
+      const result = await controller.resendVerificationEmail(body);
+
+      expect(mockAuthService.resendVerificationEmail).toHaveBeenCalledWith(
+        'a@b.com',
+      );
+      expect(result).toEqual({
+        message: 'Se ha enviado un nuevo enlace de verificación',
+      });
     });
   });
 });

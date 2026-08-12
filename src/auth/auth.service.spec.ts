@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -10,7 +10,6 @@ import {
 } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { PublicUser, User } from '../users/user.entity';
-import { UserDTO } from '../users/user.dto';
 import { MailService } from '../mail/mail.service';
 import * as bcrypt from 'bcrypt';
 
@@ -20,10 +19,7 @@ describe('AuthService', () => {
   const mockUsersService = {
     findOneByEmail: jest.fn<Promise<User | null>, [email: string]>(),
     findOne: jest.fn<Promise<User | null>, [id: string]>(),
-    updateValue: jest.fn<
-      Promise<User>,
-      [id: string, field: Partial<UserDTO>]
-    >(),
+    updateValue: jest.fn<Promise<User>, [id: string, field: Partial<User>]>(),
     create: jest.fn<
       Promise<PublicUser>,
       [dto: { email: string; username: string; password: string }]
@@ -40,11 +36,16 @@ describe('AuthService', () => {
           JWT_EXPIRATION: '1h',
           FRONTEND_URL: 'http://localhost:3000',
           PASSWORD_RESET_SECRET: 'reset-secret',
+          EMAIL_VERIFICATION_SECRET: 'email-verify-secret',
         })[key],
     ),
   };
   const mockMailService = {
     sendResetPassword: jest.fn<
+      Promise<void>,
+      [email: string, name: string, url: string]
+    >(),
+    sendUserConfirmation: jest.fn<
       Promise<void>,
       [email: string, name: string, url: string]
     >(),
@@ -54,6 +55,7 @@ describe('AuthService', () => {
     jest.clearAllMocks();
     mockJwtService.sign.mockReturnValue('jwt-token');
     mockMailService.sendResetPassword.mockResolvedValue(undefined);
+    mockMailService.sendUserConfirmation.mockResolvedValue(undefined);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -78,6 +80,7 @@ describe('AuthService', () => {
       email: 'admin@example.com',
       username: 'admin',
       status: true,
+      email_verified_at: new Date(),
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -128,6 +131,7 @@ describe('AuthService', () => {
         email: 'admin@example.com',
         username: 'admin',
         status: true,
+        email_verified_at: new Date('2026-01-01'),
         createdAt: new Date('2026-01-01'),
         updatedAt: new Date('2026-01-01'),
       };
@@ -144,19 +148,37 @@ describe('AuthService', () => {
         user,
       });
     });
+
+    it('bloquea el login si el email no está verificado (403)', () => {
+      mockJwtService.sign.mockReturnValue('signed-token');
+
+      const unverified = {
+        id: 2,
+        email: 'unverified@example.com',
+        username: 'unverified',
+        status: true,
+        email_verified_at: null,
+        createdAt: new Date('2026-01-01'),
+        updatedAt: new Date('2026-01-01'),
+      };
+
+      expect(() => service.login(unverified)).toThrow(ForbiddenException);
+      expect(mockJwtService.sign).not.toHaveBeenCalled();
+    });
   });
 
   describe('register', () => {
-    it('crea el usuario y devuelve el token de acceso', async () => {
+    it('crea el usuario, envía el correo de verificación y no inicia sesión', async () => {
       mockUsersService.create.mockResolvedValue({
         id: 2,
         email: 'new@example.com',
         username: 'newuser',
         status: false,
+        email_verified_at: null,
         createdAt: new Date('2026-01-01'),
         updatedAt: new Date('2026-01-01'),
       });
-      mockJwtService.sign.mockReturnValue('new-token');
+      mockJwtService.sign.mockReturnValue('verify-token');
 
       const result = await service.register({
         email: 'new@example.com',
@@ -169,8 +191,20 @@ describe('AuthService', () => {
         username: 'newuser',
         password: '12345678',
       });
-      expect(result.access_token).toBe('new-token');
-      expect(result.user.id).toBe(2);
+      // El token de verificación se firma con secreto dedicado, vence en 24h y lleva el claim "type: verify-email"
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        { sub: 2, email: 'new@example.com', type: 'verify-email' },
+        { secret: 'email-verify-secret', expiresIn: '24h' },
+      );
+      expect(mockMailService.sendUserConfirmation).toHaveBeenCalledWith(
+        'new@example.com',
+        'newuser',
+        'http://localhost:3000/verify-email?token=verify-token',
+      );
+      expect(result).toEqual({
+        message:
+          'Usuario registrado exitosamente. Se ha enviado un correo de verificación.',
+      });
     });
   });
 
@@ -189,6 +223,7 @@ describe('AuthService', () => {
       username: 'juan',
       password: 'hash',
       status: true,
+      email_verified_at: new Date('2026-01-01'),
       createdAt: new Date('2026-01-01'),
       updatedAt: new Date('2026-01-01'),
     };
@@ -231,6 +266,7 @@ describe('AuthService', () => {
       username: 'juan',
       password: 'old-hash',
       status: true,
+      email_verified_at: new Date('2026-01-01'),
       createdAt: new Date('2026-01-01'),
       updatedAt: new Date('2026-01-01'),
     };
@@ -287,6 +323,146 @@ describe('AuthService', () => {
         service.resetPassword('valid-token', 'Nueva12345'),
       ).rejects.toThrow(BadRequestException);
       expect(mockUsersService.updateValue).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('verifyEmail', () => {
+    const user = {
+      id: 1,
+      email: 'user@example.com',
+      username: 'juan',
+      password: 'hash',
+      status: true,
+      email_verified_at: null,
+      createdAt: new Date('2026-01-01'),
+      updatedAt: new Date('2026-01-01'),
+    };
+
+    const validPayload = {
+      sub: 1,
+      email: 'user@example.com',
+      type: 'verify-email' as const,
+    };
+
+    it('marca el email como verificado y devuelve el usuario sin password', async () => {
+      mockJwtService.verify.mockReturnValue(validPayload);
+      mockUsersService.findOne.mockResolvedValue(user);
+      mockUsersService.updateValue.mockResolvedValue({
+        ...user,
+        email_verified_at: new Date('2026-01-02'),
+      });
+
+      const result = await service.verifyEmail('valid-token');
+
+      expect(mockJwtService.verify).toHaveBeenCalledWith('valid-token', {
+        secret: 'email-verify-secret',
+      });
+      const updateCall = mockUsersService.updateValue.mock.calls[0];
+      expect(updateCall[0]).toBe('1');
+      expect(updateCall[1].email_verified_at).toBeInstanceOf(Date);
+      expect(result.message).toBe('Email verificado correctamente');
+      expect(result.user.email).toBe('user@example.com');
+      expect(result.user).not.toHaveProperty('password');
+    });
+
+    it('rechaza tokens inválidos o expirados', async () => {
+      mockJwtService.verify.mockImplementation(() => {
+        throw new Error('jwt expired');
+      });
+
+      await expect(service.verifyEmail('bad-token')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockUsersService.updateValue).not.toHaveBeenCalled();
+    });
+
+    it('rechaza tokens que no sean de verificación (p.ej. access tokens)', async () => {
+      mockJwtService.verify.mockReturnValue({
+        ...validPayload,
+        type: 'access',
+      });
+
+      await expect(service.verifyEmail('access-token')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockUsersService.updateValue).not.toHaveBeenCalled();
+    });
+
+    it('rechaza la operación si el usuario del token ya no existe', async () => {
+      mockJwtService.verify.mockReturnValue({ ...validPayload, sub: 999 });
+      mockUsersService.findOne.mockResolvedValue(null);
+
+      await expect(service.verifyEmail('valid-token')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockUsersService.updateValue).not.toHaveBeenCalled();
+    });
+
+    it('rechaza la operación si el email ya está verificado', async () => {
+      mockJwtService.verify.mockReturnValue(validPayload);
+      mockUsersService.findOne.mockResolvedValue({
+        ...user,
+        email_verified_at: new Date('2026-01-02'),
+      });
+
+      await expect(service.verifyEmail('valid-token')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockUsersService.updateValue).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resendVerificationEmail', () => {
+    const user = {
+      id: 1,
+      email: 'user@example.com',
+      username: 'juan',
+      password: 'hash',
+      status: true,
+      email_verified_at: null,
+      createdAt: new Date('2026-01-01'),
+      updatedAt: new Date('2026-01-01'),
+    };
+
+    it('reenvía el enlace si el usuario existe y no está verificado', async () => {
+      mockUsersService.findOneByEmail.mockResolvedValue(user);
+      mockJwtService.sign.mockReturnValue('verify-token');
+
+      const result = await service.resendVerificationEmail('user@example.com');
+
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        { sub: 1, email: 'user@example.com', type: 'verify-email' },
+        { secret: 'email-verify-secret', expiresIn: '24h' },
+      );
+      expect(mockMailService.sendUserConfirmation).toHaveBeenCalledWith(
+        'user@example.com',
+        'juan',
+        'http://localhost:3000/verify-email?token=verify-token',
+      );
+      expect(result).toEqual({
+        message: 'Se ha enviado un nuevo enlace de verificación',
+      });
+    });
+
+    it('devuelve un mensaje genérico y no envía si el usuario no existe', async () => {
+      mockUsersService.findOneByEmail.mockResolvedValue(null);
+
+      const result = await service.resendVerificationEmail('ghost@example.com');
+
+      expect(mockMailService.sendUserConfirmation).not.toHaveBeenCalled();
+      expect(result.message).toContain('Si el correo existe');
+    });
+
+    it('devuelve un mensaje genérico y no envía si el email ya está verificado', async () => {
+      mockUsersService.findOneByEmail.mockResolvedValue({
+        ...user,
+        email_verified_at: new Date('2026-01-02'),
+      });
+
+      const result = await service.resendVerificationEmail('user@example.com');
+
+      expect(mockMailService.sendUserConfirmation).not.toHaveBeenCalled();
+      expect(result.message).toContain('Si el correo existe');
     });
   });
 

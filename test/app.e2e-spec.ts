@@ -40,9 +40,6 @@ describe('Auth (e2e)', () => {
   const TEST_SECRET = 'e2e-test-secret';
   const RESET_SECRET = 'e2e-reset-secret';
 
-  // URL capturada por el mock del servicio de correo en el flujo de recuperación
-  let sentResetUrl = '';
-
   // "Base de datos" en memoria: email -> usuario (con password hasheado)
   const db = new Map<
     string,
@@ -52,9 +49,13 @@ describe('Auth (e2e)', () => {
       username: string;
       password: string;
       status: boolean;
+      email_verified_at?: Date | null;
     }
   >();
 
+  // URLs capturadas por el mock del servicio de correo
+  let sentResetUrl = '';
+  let sentVerifyUrl = '';
   const mockUsersService = {
     create: jest.fn(
       async (dto: { email: string; username: string; password: string }) => {
@@ -64,11 +65,18 @@ describe('Auth (e2e)', () => {
           email,
           username: dto.username,
           status: false,
+          email_verified_at: null,
           password: await bcrypt.hash(dto.password, 10),
         };
         db.set(email, user);
         const { id, email: userEmail, username, status } = user;
-        return { id, email: userEmail, username, status };
+        return {
+          id,
+          email: userEmail,
+          username,
+          status,
+          email_verified_at: null,
+        };
       },
     ),
     findOneByEmail: jest.fn((email: string) => {
@@ -78,14 +86,21 @@ describe('Auth (e2e)', () => {
       const user = [...db.values()].find((u) => String(u.id) === id);
       return Promise.resolve(user ?? null);
     }),
-    updateValue: jest.fn((id: string, field: { password: string }) => {
-      const user = [...db.values()].find((u) => String(u.id) === id);
-      if (!user) {
-        throw new Error('Usuario no encontrado');
-      }
-      user.password = field.password;
-      return user;
-    }),
+    updateValue: jest.fn(
+      (id: string, field: { password?: string; email_verified_at?: Date }) => {
+        const user = [...db.values()].find((u) => String(u.id) === id);
+        if (!user) {
+          throw new Error('Usuario no encontrado');
+        }
+        if (field.password !== undefined) {
+          user.password = field.password;
+        }
+        if (field.email_verified_at !== undefined) {
+          user.email_verified_at = field.email_verified_at;
+        }
+        return user;
+      },
+    ),
     createAdminUser: jest.fn(),
   };
 
@@ -93,12 +108,18 @@ describe('Auth (e2e)', () => {
     sendResetPassword: jest.fn((_email: string, _name: string, url: string) => {
       sentResetUrl = url;
     }),
+    sendUserConfirmation: jest.fn(
+      (_email: string, _name: string, url: string) => {
+        sentVerifyUrl = url;
+      },
+    ),
   };
 
   beforeAll(async () => {
     // Fija las variables para que los tests no dependan de un .env externo
     process.env.JWT_SECRET = TEST_SECRET;
     process.env.PASSWORD_RESET_SECRET = RESET_SECRET;
+    process.env.EMAIL_VERIFICATION_SECRET = 'e2e-email-verify-secret';
     process.env.JWT_EXPIRATION = '1h';
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -136,7 +157,9 @@ describe('Auth (e2e)', () => {
   beforeEach(() => {
     db.clear();
     sentResetUrl = '';
+    sentVerifyUrl = '';
     mockMailService.sendResetPassword.mockClear();
+    mockMailService.sendUserConfirmation.mockClear();
   });
 
   afterAll(async () => {
@@ -144,7 +167,7 @@ describe('Auth (e2e)', () => {
   });
 
   describe('POST /auth/register', () => {
-    it('registra un usuario y devuelve un access_token (201)', async () => {
+    it('registra un usuario, devuelve un mensaje y envía el correo de verificación (201)', async () => {
       const res = await request(app.getHttpServer())
         .post('/auth/register')
         .send({
@@ -154,13 +177,15 @@ describe('Auth (e2e)', () => {
         })
         .expect(201);
 
-      const body = res.body as AuthResponseBody;
-
-      expect(body.access_token).toBeDefined();
-      expect(body.token_type).toBe('Bearer');
-      expect(body.expires_in).toBe(3600);
-      expect(body.user.email).toBe('user@example.com');
-      expect(body.user).not.toHaveProperty('password');
+      expect(res.body).toEqual({
+        message:
+          'Usuario registrado exitosamente. Se ha enviado un correo de verificación.',
+      });
+      expect(mockMailService.sendUserConfirmation).toHaveBeenCalledWith(
+        'user@example.com',
+        'juan',
+        expect.stringContaining('/verify-email?token='),
+      );
     });
 
     it('rechaza un email inválido (400)', async () => {
@@ -204,12 +229,13 @@ describe('Auth (e2e)', () => {
 
   describe('POST /auth/login', () => {
     beforeEach(async () => {
-      // Crea el usuario admin en la "BD" con la contraseña por defecto
+      // Crea el usuario admin en la "BD" con la contraseña por defecto (email verificado)
       db.set('admin@example.com', {
         id: 1,
         email: 'admin@example.com',
         username: 'admin',
         status: true,
+        email_verified_at: new Date(),
         password: await bcrypt.hash('12345678', 10),
       });
     });
@@ -240,6 +266,24 @@ describe('Auth (e2e)', () => {
         .send({ email: 'ghost@example.com', password: '12345678' })
         .expect(401);
     });
+
+    it('bloquea el login si el email no está verificado (403 EMAIL_NOT_VERIFIED)', async () => {
+      db.set('noverify@example.com', {
+        id: 2,
+        email: 'noverify@example.com',
+        username: 'noverify',
+        status: true,
+        email_verified_at: null,
+        password: await bcrypt.hash('Abc12345', 10),
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'noverify@example.com', password: 'Abc12345' })
+        .expect(403);
+
+      expect((res.body as { error: string }).error).toBe('EMAIL_NOT_VERIFIED');
+    });
   });
 
   describe('GET /auth/profile', () => {
@@ -249,6 +293,7 @@ describe('Auth (e2e)', () => {
         email: 'admin@example.com',
         username: 'admin',
         status: true,
+        email_verified_at: new Date(),
         password: await bcrypt.hash('12345678', 10),
       });
 
@@ -281,6 +326,7 @@ describe('Auth (e2e)', () => {
         email: 'admin@example.com',
         username: 'admin',
         status: true,
+        email_verified_at: new Date(),
         password: await bcrypt.hash('12345678', 10),
       });
 
@@ -349,6 +395,14 @@ describe('Auth (e2e)', () => {
         })
         .expect(201);
 
+      // El login final requiere email verificado: se verifica con el enlace enviado
+      const verifyToken = new URL(sentVerifyUrl).searchParams.get('token');
+      expect(verifyToken).toBeDefined();
+      await request(app.getHttpServer())
+        .post('/auth/verify-email')
+        .send({ token: verifyToken })
+        .expect(201);
+
       await request(app.getHttpServer())
         .post('/auth/forgot-password')
         .send({ email: 'user@example.com' })
@@ -410,6 +464,126 @@ describe('Auth (e2e)', () => {
         .get('/auth/profile')
         .set('Authorization', `Bearer ${token}`)
         .expect(401);
+    });
+  });
+
+  describe('POST /auth/verify-email', () => {
+    it('verifica el email con un token válido y permite el login (201)', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          email: 'user@example.com',
+          username: 'juan',
+          password: 'Abc12345',
+        })
+        .expect(201);
+
+      const token = new URL(sentVerifyUrl).searchParams.get('token');
+      expect(token).toBeDefined();
+
+      const res = await request(app.getHttpServer())
+        .post('/auth/verify-email')
+        .send({ token })
+        .expect(201);
+      const body = res.body as {
+        message: string;
+        user: { email: string };
+      };
+
+      expect(body.message).toBe('Email verificado correctamente');
+      expect(body.user.email).toBe('user@example.com');
+      expect(body.user).not.toHaveProperty('password');
+
+      // Ahora el login funciona
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'user@example.com', password: 'Abc12345' })
+        .expect(200);
+    });
+
+    it('rechaza tokens inválidos (400)', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/verify-email')
+        .send({ token: 'token-invalido' })
+        .expect(400);
+    });
+
+    it('rechaza un token de un email ya verificado (400)', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          email: 'user@example.com',
+          username: 'juan',
+          password: 'Abc12345',
+        })
+        .expect(201);
+
+      const token = new URL(sentVerifyUrl).searchParams.get('token');
+      expect(token).toBeDefined();
+
+      await request(app.getHttpServer())
+        .post('/auth/verify-email')
+        .send({ token })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post('/auth/verify-email')
+        .send({ token })
+        .expect(400);
+    });
+
+    it('un token de verificación no sirve como access token (401 en /auth/profile)', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          email: 'user@example.com',
+          username: 'juan',
+          password: 'Abc12345',
+        })
+        .expect(201);
+
+      const token = new URL(sentVerifyUrl).searchParams.get('token');
+      expect(token).toBeDefined();
+
+      await request(app.getHttpServer())
+        .get('/auth/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(401);
+    });
+  });
+
+  describe('POST /auth/resend-verification-email', () => {
+    it('reenvía el enlace si la cuenta existe y no está verificada (201)', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          email: 'user@example.com',
+          username: 'juan',
+          password: 'Abc12345',
+        })
+        .expect(201);
+      mockMailService.sendUserConfirmation.mockClear();
+
+      const res = await request(app.getHttpServer())
+        .post('/auth/resend-verification-email')
+        .send({ email: 'user@example.com' })
+        .expect(201);
+
+      expect(res.body).toEqual({
+        message: 'Se ha enviado un nuevo enlace de verificación',
+      });
+      expect(mockMailService.sendUserConfirmation).toHaveBeenCalled();
+    });
+
+    it('no revela si la cuenta no existe o ya está verificada (201 genérico)', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/auth/resend-verification-email')
+        .send({ email: 'ghost@example.com' })
+        .expect(201);
+
+      expect((res.body as { message: string }).message).toContain(
+        'Si el correo existe',
+      );
+      expect(mockMailService.sendUserConfirmation).not.toHaveBeenCalled();
     });
   });
 });

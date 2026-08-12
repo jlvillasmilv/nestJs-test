@@ -78,6 +78,7 @@ export class UsersService {
   /**
    * Crea el usuario administrador inicial (estado activo).
    * Usado por el seeder al arrancar la aplicación.
+   * El email se marca como verificado para que el admin pueda iniciar sesión.
    * Devuelve el usuario sin el campo `password` (`PublicUser`).
    */
   async createAdminUser(email: string, password: string): Promise<PublicUser> {
@@ -87,6 +88,7 @@ export class UsersService {
       username: 'admin',
       password: hashedPassword,
       status: true,
+      email_verified_at: new Date(),
     });
     const savedUser = await this.usersRepository.save(user);
 
@@ -173,7 +175,11 @@ export class UsersService {
     return await this.usersRepository.remove(user);
   }
 
-  async updateValue(id: string, field: Partial<UserDTO>): Promise<User> {
+  /**
+   * Actualiza campos arbitrarios del usuario (uso interno).
+   * Acepta cualquier campo de la entidad, p.ej. `password` o `email_verified_at`.
+   */
+  async updateValue(id: string, field: Partial<User>): Promise<User> {
     const user = await this.usersRepository.findOne({
       where: { id: parseInt(id) },
     });

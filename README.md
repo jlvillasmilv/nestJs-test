@@ -1,8 +1,8 @@
 # my-frist-app
 
 API REST con [NestJS](https://nestjs.com), TypeORM y MySQL que incluye autenticación JWT
-(registro, login, logout, perfil y recuperación de contraseña por email) y un usuario
-administrador creado automáticamente.
+(registro con verificación de email, login, logout, perfil y recuperación de contraseña
+por email) y un usuario administrador creado automáticamente.
 
 ## Requisitos
 
@@ -38,8 +38,9 @@ administrador creado automáticamente.
    | `JWT_EXPIRATION`    | `1h`                            | Vigencia del token (`30m`, `1h`, `7d`, …)                |
    | `ADMIN_EMAIL`       | `admin@example.com`             | Email del admin inicial                                  |
    | `ADMIN_PASSWORD`    | `12345678`                      | Contraseña del admin inicial                             |
-   | `FRONTEND_URL`      | `http://localhost:3000`         | Base URL del frontend (enlace de recuperación)           |
+   | `FRONTEND_URL`      | `http://localhost:3000`         | Base URL del frontend (enlaces de recuperación/verificación) |
    | `PASSWORD_RESET_SECRET` | *(usa `JWT_SECRET`)*        | Secreto dedicado para tokens de recuperación (recomendado) |
+   | `EMAIL_VERIFICATION_SECRET` | *(usa `JWT_SECRET`)*   | Secreto dedicado para tokens de verificación de email (recomendado) |
    | `MAIL_HOST`         | *(vacío)*                       | Host SMTP                                                |
    | `MAIL_PORT`         | *(vacío)*                       | Puerto SMTP                                              |
    | `MAIL_USER`         | *(vacío)*                       | Usuario SMTP                                             |
@@ -66,13 +67,18 @@ El usuario se crea con estado **activo** (`status = true`) y su contraseña se a
 hasheada con bcrypt. Si ya existe, el seeder lo omite. Las credenciales pueden
 cambiarse con `ADMIN_EMAIL` y `ADMIN_PASSWORD`.
 
+> El admin se crea con `email_verified_at` establecido para poder iniciar sesión
+> directamente, ya que el login exige email verificado.
+
 > ⚠️ Cambia la contraseña del admin antes de exponer el servicio a producción.
 
 ## Endpoints de autenticación
 
 | Método | Ruta               | Público | Descripción                                        |
 | ------ | ------------------ | ------- | -------------------------------------------------- |
-| POST   | `/auth/register`   | ✅      | Registro de usuario (201)                          |
+| POST   | `/auth/register`   | ✅      | Registro de usuario; envía correo de verificación (201) |
+| POST   | `/auth/verify-email` | ✅    | Verifica el email con el token del correo (201)    |
+| POST   | `/auth/resend-verification-email` | ✅ | Reenvía el correo de verificación (201)    |
 | POST   | `/auth/login`      | ✅      | Login con email + contraseña (200)                 |
 | POST   | `/auth/forgot-password` | ✅  | Solicita enlace de recuperación por email (201)    |
 | POST   | `/auth/reset-password`  | ✅  | Restablece la contraseña con el token (201)        |
@@ -86,7 +92,26 @@ cambiarse con `ADMIN_EMAIL` y `ADMIN_PASSWORD`.
 ```bash
 curl -X POST http://localhost:3000/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"email":"juan@example.com","username":"juan","password":"12345678"}'
+  -d '{"email":"juan@example.com","username":"juan","password":"Abc12345"}'
+```
+
+> El registro **no** inicia sesión: se envía un correo con un enlace de verificación
+> (válido 24 h) usando la plantilla `src/templates/verification.hbs`.
+
+**Verificar email**
+
+```bash
+curl -X POST http://localhost:3000/auth/verify-email \
+  -H "Content-Type: application/json" \
+  -d '{"token":"<token-del-correo>"}'
+```
+
+**Reenviar correo de verificación** (si se perdió el enlace)
+
+```bash
+curl -X POST http://localhost:3000/auth/resend-verification-email \
+  -H "Content-Type: application/json" \
+  -d '{"email":"juan@example.com"}'
 ```
 
 **Login**
@@ -150,6 +175,17 @@ curl -X POST http://localhost:3000/auth/reset-password \
 El `ValidationPipe` global está configurado con `whitelist` + `forbidNonWhitelisted`
 (se rechazan con 400 propiedades desconocidas como `id` o `status`). El login de un
 email inexistente responde **401** (no 404) para no revelar qué emails están registrados.
+
+### Verificación de email
+
+Los usuarios deben verificar su email (`email_verified_at`) antes de iniciar sesión:
+
+- Al registrarse se envía un correo con un enlace de verificación (token JWT con
+  claim `type: "verify-email"`, firmado con `EMAIL_VERIFICATION_SECRET` y válido 24 h).
+- El login de un email sin verificar responde **403** con `error: "EMAIL_NOT_VERIFIED"`
+  para que el frontend pueda ofrecer el reenvío.
+- `POST /auth/resend-verification-email` reenvía el enlace (respuesta genérica para
+  no enumerar cuentas).
 
 ## Envío de correos (recuperación de contraseña)
 

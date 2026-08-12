@@ -38,6 +38,11 @@ export class User {
   @Column({ type: 'boolean', default: false })
   status: boolean;
 
+  /** `null` = email aún no verificado; timestamp = fecha de verificación. */
+  @Column({ type: 'timestamp', nullable: true })
+  @Exclude()
+  email_verified_at: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

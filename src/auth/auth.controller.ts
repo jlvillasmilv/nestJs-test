@@ -15,6 +15,7 @@ import { PublicUser } from '../users/user.entity';
 import { UserDTO } from '../users/user.dto';
 import { ForgotPasswordDTO } from './forgot-password.dto';
 import { ResetPasswordDTO } from './reset-password.dto';
+import { VerifyEmailDTO } from './verify-email.dto';
 
 /** Usuario inyectado por el guard JWT en `req.user`. */
 interface JwtRequestUser {
@@ -26,12 +27,14 @@ interface JwtRequestUser {
  * Controlador de autenticación.
  *
  * Endpoints:
- * - `POST /auth/register`        — registro de usuario (público)
- * - `POST /auth/login`           — inicio de sesión con email + contraseña (público)
- * - `POST /auth/forgot-password` — solicitud de recuperación de contraseña (público)
- * - `POST /auth/reset-password`  — restablecimiento de contraseña (público)
- * - `POST /auth/logout`          — cierre de sesión (requiere JWT)
- * - `GET  /auth/profile`         — datos del usuario autenticado (requiere JWT)
+ * - `POST /auth/register`                — registro de usuario (público)
+ * - `POST /auth/verify-email`            — verificación de email con token (público)
+ * - `POST /auth/resend-verification-email` — reenvío del correo de verificación (público)
+ * - `POST /auth/login`                   — inicio de sesión con email + contraseña (público)
+ * - `POST /auth/forgot-password`         — solicitud de recuperación de contraseña (público)
+ * - `POST /auth/reset-password`          — restablecimiento de contraseña (público)
+ * - `POST /auth/logout`                  — cierre de sesión (requiere JWT)
+ * - `GET  /auth/profile`                 — datos del usuario autenticado (requiere JWT)
  */
 @Controller('auth')
 export class AuthController {
@@ -40,7 +43,10 @@ export class AuthController {
   /**
    * Registra un usuario nuevo.
    *
-   * @returns `201` con `{ access_token, token_type, expires_in, user }`.
+   * El usuario queda creado pero sin acceso: debe verificar su email con el
+   * enlace que se envía por correo antes de poder iniciar sesión.
+   *
+   * @returns `201` con mensaje de confirmación.
    * @throws `400` si el payload no cumple las validaciones de `UserDTO`.
    * @throws `409` si el email ya está registrado.
    */
@@ -50,11 +56,37 @@ export class AuthController {
   }
 
   /**
+   * Verifica el email con el token recibido por correo.
+   *
+   * @body `{ token: string }`
+   * @returns `201` con mensaje y datos públicos del usuario.
+   * @throws `400` si el token es inválido/expirado o el email ya está verificado.
+   */
+  @Post('verify-email')
+  verifyEmail(@Body() body: VerifyEmailDTO) {
+    return this.authService.verifyEmail(body.token);
+  }
+
+  /**
+   * Reenvía el correo de verificación si la cuenta existe y no está verificada.
+   *
+   * La respuesta es genérica para no revelar qué emails existen.
+   *
+   * @body `{ email: string }`
+   * @returns `201` con mensaje de confirmación.
+   */
+  @Post('resend-verification-email')
+  resendVerificationEmail(@Body() body: ForgotPasswordDTO) {
+    return this.authService.resendVerificationEmail(body.email);
+  }
+
+  /**
    * Inicia sesión con email y contraseña (estrategia local).
    *
    * @body `{ email: string, password: string }`
    * @returns `200` con `{ access_token, token_type, expires_in, user }`.
    * @throws `401` si las credenciales son inválidas.
+   * @throws `403` si el email aún no está verificado (`EMAIL_NOT_VERIFIED`).
    */
   @Post('login')
   @HttpCode(HttpStatus.OK)
