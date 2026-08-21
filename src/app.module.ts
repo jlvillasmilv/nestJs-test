@@ -5,7 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
-import { SeedModule } from './database/seed.module';
+// import { SeedModule } from './database/seed.module';
 import { MailModule } from './mail/mail.module';
 
 @Module({
@@ -34,7 +34,7 @@ import { MailModule } from './mail/mail.module';
     UsersModule,
     AuthModule,
     // Crea el usuario administrador por defecto (admin@example.com) al arrancar
-    SeedModule,
+    // SeedModule,
     MailModule,
   ],
   controllers: [],

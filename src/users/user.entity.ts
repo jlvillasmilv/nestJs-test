@@ -4,8 +4,11 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
+  OneToMany,
 } from 'typeorm';
 import { Exclude } from 'class-transformer';
+import { Task } from '../tasks/entities/task.entity';
+import { Project } from '../projects/entities/project.entity';
 
 /** Tipo de usuario sin el campo sensible `password`. */
 export type PublicUser = Omit<User, 'password'>;
@@ -48,4 +51,11 @@ export class User {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  // Ensure this exists and is typed correctly
+  @OneToMany(() => Task, (task) => task.user)
+  tasks?: Task[];
+
+  @OneToMany(() => Project, (project) => project.user)
+  projects?: Project[];
 }

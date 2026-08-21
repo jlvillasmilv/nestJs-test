@@ -31,7 +31,7 @@ export class UsersService {
   }
 
   /**
-   * Crea un usuario normal (estado inactivo por defecto).
+   * Create user (estado inactivo por defecto).
    *
    * - Normaliza el email a minúsculas.
    * - Rechaza emails ya registrados con `ConflictException` (409).

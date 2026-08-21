@@ -16,12 +16,7 @@ import { UserDTO } from '../users/user.dto';
 import { ForgotPasswordDTO } from './forgot-password.dto';
 import { ResetPasswordDTO } from './reset-password.dto';
 import { VerifyEmailDTO } from './verify-email.dto';
-
-/** Usuario inyectado por el guard JWT en `req.user`. */
-interface JwtRequestUser {
-  userId: number;
-  email: string;
-}
+import { JwtUser } from './strategies/jwt.strategy';
 
 /**
  * Controlador de autenticación.
@@ -117,7 +112,7 @@ export class AuthController {
    */
   @Get('profile')
   @UseGuards(AuthGuard('jwt'))
-  getProfile(@Req() req: Request & { user: JwtRequestUser }) {
+  getProfile(@Req() req: Request & { user: JwtUser }) {
     return req.user;
   }
 
