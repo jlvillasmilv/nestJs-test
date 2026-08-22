@@ -16,8 +16,7 @@ export class UpdateProjectDto {
   @MaxLength(150, { message: 'El Titulo no puede superar los 150 caracteres' })
   title: string;
 
-  @IsString({ message: 'La descripción debe ser una cadena de texto' })
-  @IsNotEmpty({ message: 'La descripción es obligatoriaq' })
+  @IsNotEmpty({ message: 'La descripción es obligatoria' })
   @MinLength(3, { message: 'La descripción debe tener al menos 3 caracteres' })
   @MaxLength(250, {
     message: 'La descripción no puede superar los 250 caracteres',

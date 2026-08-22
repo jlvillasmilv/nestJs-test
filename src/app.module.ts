@@ -24,7 +24,7 @@ import { MailModule } from './mail/mail.module';
         password: configService.get('DB_PASSWORD'),
         database: configService.get('DB_NAME'),
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: configService.get('NODE_ENV') === 'development', // ¡Nunca true en producción!
+        synchronize: false, // ¡Nunca true en producción!
         logging: configService.get('NODE_ENV') === 'development',
       }),
       inject: [ConfigService],

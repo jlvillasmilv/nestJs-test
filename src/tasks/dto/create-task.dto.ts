@@ -14,7 +14,7 @@ export class CreateTaskDto {
   title: string;
 
   @IsString({ message: 'La descripción debe ser una cadena de texto' })
-  @IsNotEmpty({ message: 'La descripción es obligatoriaq' })
+  @IsNotEmpty({ message: 'La descripción es obligatoria' })
   @MinLength(3, { message: 'La descripción debe tener al menos 3 caracteres' })
   @MaxLength(250, {
     message: 'La descripción no puede superar los 250 caracteres',
@@ -22,5 +22,5 @@ export class CreateTaskDto {
   description: string;
 
   @IsBoolean({ message: 'El estado de la tarea debe ser un valor booleano' })
-  isCompleted: boolean;
+  is_completed: boolean | undefined;
 }

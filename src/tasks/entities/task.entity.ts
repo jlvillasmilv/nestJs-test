@@ -30,11 +30,11 @@ export class Task {
   @JoinColumn({ name: 'project_id' }) // Nombre de la columna en la base de datos
   project: Project | null;
 
-  @Column({ type: 'boolean', default: false })
-  isDraft: boolean;
+  @Column({ type: 'boolean', default: false, name: 'is_draft' })
+  is_draft: boolean;
 
-  @Column({ type: 'boolean', default: false })
-  isCompleted: boolean;
+  @Column({ type: 'boolean', default: false, name: 'is_completed' })
+  is_completed: boolean;
 
   @CreateDateColumn()
   createdAt: Date;
